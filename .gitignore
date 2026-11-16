@@ -1,0 +1,9 @@
+# large / generated files that must not go to GitHub (100 MB limit)
+data/raw/
+data/criteo.duckdb
+data/*.log
+data/*.err
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
