@@ -535,11 +535,12 @@ with tabs[5]:
     ui.callout("Auto-brief at your current assumptions", "Generated from the same tools, no AI key needed.", "good")
     st.markdown(AI.deterministic_brief(tb))
 
-    key = AI.api_key()
-    if not key:
+    # The key box is always rendered (inside an expander) so Streamlit keeps its value across reruns;
+    # a widget that disappears would have its value wiped on the next click.
+    with st.expander("🔑 AI settings", expanded=not AI.api_key()):
         st.text_input("Google Gemini API key (kept in this browser session only)", type="password", key="gemini_key",
                       help="Free key at aistudio.google.com/apikey. Or set GEMINI_API_KEY in Streamlit secrets.")
-        key = AI.api_key()
+    key = AI.api_key()
     if not key:
         st.info("Add a free Gemini API key above to ask questions. The auto-brief above always works.", icon="🔑")
     else:
