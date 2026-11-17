@@ -28,25 +28,31 @@ pipeline/             data build (not needed to run or deploy the app)
 data/app.duckdb       slim database (about 8 MB), committed so the app can deploy
 ```
 
-## Run it locally
+## App Deployment URL
 
-Quick start, using the slim database that is already in the repo:
+**https://incrementality-desk.streamlit.app/**
+
+## Local Setup Instructions
 
 ```bash
-pip install -r requirements.txt
-INCREMENTALITY_DB=slim streamlit run app/streamlit_app.py     # Windows PowerShell: $env:INCREMENTALITY_DB="slim"; streamlit run app/streamlit_app.py
+git clone https://github.com/Lavannya22/incrementality-desk.git
+cd incrementality-desk
+uv sync
+uv run streamlit run app/streamlit_app.py
 ```
 
-Full rebuild from the raw data (about 15 minutes):
+The slim database (`data/app.duckdb`, about 8 MB) is committed, so the app runs right after cloning. No download needed.
+
+## Rebuilding the data (optional, about 15 minutes)
 
 ```bash
-pip install -r requirements.txt -r pipeline/requirements.txt
-python pipeline/00_download.py     # 311 MB from Hugging Face (skip if data/raw already has the file)
-python pipeline/01_ingest.py       # CSV.gz -> DuckDB, ~75 s
-python pipeline/02_train_score.py  # uplift models + scoring of the 30% hold-out, ~8 min
-python pipeline/03_aggregates.py   # balance + convergence tables, seconds
-python pipeline/04_build_app_db.py # slim deployable database (data/app.duckdb), ~1 min
-streamlit run app/streamlit_app.py
+uv sync --group pipeline
+uv run python pipeline/00_download.py     # 311 MB from Hugging Face (skip if data/raw already has the file)
+uv run python pipeline/01_ingest.py       # CSV.gz -> DuckDB, ~75 s
+uv run python pipeline/02_train_score.py  # uplift models + scoring of the 30% hold-out, ~8 min
+uv run python pipeline/03_aggregates.py   # balance + convergence tables, seconds
+uv run python pipeline/04_build_app_db.py # slim deployable database (data/app.duckdb), ~1 min
+uv run streamlit run app/streamlit_app.py
 ```
 
 Two databases, one app:
