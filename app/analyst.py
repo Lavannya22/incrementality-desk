@@ -282,18 +282,21 @@ def _declarations(types):
     return [types.Tool(function_declarations=decls)]
 
 
-def _pick_model(client, failed: str, error: str) -> str:
-    """After 'model not found/retired': use the model Google's error suggests, else the newest 'flash' model."""
-    suggested = [m for m in re.findall(r"models/([\w.\-]+)", error) if m != failed]
+def _pick_model(client, failed: str, error: str, tried: set | None = None) -> str:
+    """Pick a replacement model: the one Google's error suggests, else the newest untried 'flash' model,
+    else (last resort) the newest untried 'flash-lite' model. Returns `failed` if nothing is left."""
+    skip = set(tried or ()) | {failed}
+    suggested = [m for m in re.findall(r"models/([\w.\-]+)", error) if m not in skip]
     if suggested:
         return suggested[0]
     try:
         names = [m.name.removeprefix("models/") for m in client.models.list()]
     except Exception:
         return failed
-    flash = sorted(n for n in names if "flash" in n and n != failed
-                   and not any(x in n for x in ("image", "tts", "audio", "live", "lite", "preview", "exp")))
-    return flash[-1] if flash else failed
+    bad = ("image", "tts", "audio", "live", "preview", "exp", "embedding")
+    flash = sorted(n for n in names if "flash" in n and "lite" not in n and n not in skip and not any(x in n for x in bad))
+    lite = sorted(n for n in names if "flash-lite" in n and n not in skip and not any(x in n for x in bad))
+    return flash[-1] if flash else lite[-1] if lite else failed
 
 
 def ask(question: str, history: list, toolbox: Toolbox, key: str, on_step=None) -> dict:
@@ -321,6 +324,7 @@ def ask(question: str, history: list, toolbox: Toolbox, key: str, on_step=None) 
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
 
     model, calls = model_name(), []
+    tried = {model}
     for attempt in range(7):
         step(f"Asking {model}…" if attempt == 0 else "Writing the answer from the data…")
         t0 = time.time()
@@ -337,10 +341,11 @@ def ask(question: str, history: list, toolbox: Toolbox, key: str, on_step=None) 
                 elif "thinking" in msg.lower() and "400" in msg:       # model without thinking levels
                     config = make_config(thinking=False)
                 elif "504" in msg or "503" in msg or "DEADLINE" in msg or "UNAVAILABLE" in msg or "overloaded" in msg.lower():
-                    alt = _pick_model(client, model, "")             # busy model: switch to another flash model
+                    alt = _pick_model(client, model, "", tried)      # busy model: switch to an untried flash model
                     if alt != model:
                         step(f"{model} is busy right now. Switching to {alt}…")
                         model = alt
+                        tried.add(alt)
                     elif tries == 0:
                         step("Google was slow to respond. Retrying once…")
                     else:
