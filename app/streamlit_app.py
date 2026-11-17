@@ -74,7 +74,7 @@ ui.hero(
      "Opportunity: Do-Not-Target engine", "DuckDB · 13.98M rows"])
 
 tabs = st.tabs(["📋 Executive Brief", "🧪 1 · Incrementality Ledger", "🎯 2 · Who To Target",
-                "🚫 3 · Do-Not-Target Engine", "💰 4 · Business Case", "🔎 Methods & SQL"])
+                "🚫 3 · Do-Not-Target Engine", "💰 4 · Business Case", "🤖 AI Analyst", "🔎 Methods & SQL"])
 
 # =================================================================== TAB 0: EXECUTIVE BRIEF
 with tabs[0]:
@@ -514,8 +514,92 @@ with tabs[4]:
     st.dataframe(cal, hide_index=True, width="stretch")
     st.caption("Spend assumes the observed exposure rate of the treated group. Revenue uses the intent-to-treat lift for the full audience.")
 
-# =================================================================== TAB 5: METHODS & SQL
+# =================================================================== TAB 5: AI ANALYST
 with tabs[5]:
+    import analyst as AI
+
+    ui.section("Ask the Analyst",
+               "Ask in plain English. Gemini can only answer by calling the same functions that draw this dashboard, "
+               "and every figure it quotes is checked against those results.")
+    tb = AI.Toolbox(A)
+    with st.expander("How the AI works", expanded=False):
+        st.markdown(
+            "1. Your question goes to **Google Gemini** with 5 *tools*: incrementality, targeting policy, strategy "
+            "comparison, segments, model validation.\n"
+            "2. Gemini **cannot compute numbers itself**. It calls the tools; our code runs them on the DuckDB tables "
+            "using your sidebar assumptions.\n"
+            "3. Gemini writes the answer from the returned numbers.\n"
+            "4. A **figure check** pulls every number out of the answer and verifies it against the tool outputs. "
+            "Anything that doesn't match is flagged ⚠️.")
+
+    ui.callout("Auto-brief at your current assumptions", "Generated from the same tools, no AI key needed.", "good")
+    st.markdown(AI.deterministic_brief(tb))
+
+    key = AI.api_key()
+    if not key:
+        st.text_input("Google Gemini API key (kept in this browser session only)", type="password", key="gemini_key",
+                      help="Free key at aistudio.google.com/apikey. Or set GEMINI_API_KEY in Streamlit secrets.")
+        key = AI.api_key()
+    if not key:
+        st.info("Add a free Gemini API key above to ask questions. The auto-brief above always works.", icon="🔑")
+    else:
+        st.caption(f"Model: `{AI.model_name()}`")
+        st.session_state.setdefault("chat", [])
+
+        def render(ans):
+            st.markdown(ans["text"])
+            g = ans["grounding"]
+            label = ("No figures quoted" if not g.total else
+                     f"✅ All {g.total} figures traced to the data" if g.ok == g.total else
+                     f"⚠️ {g.total - g.ok} of {g.total} figures could not be traced. Treat them with caution.")
+            with st.expander(label):
+                if g.checked:
+                    st.write(" · ".join(f"{'✅' if ok else '⚠️'} `{t}`" for t, ok in g.checked))
+                for name, inp, out in ans["calls"]:
+                    st.markdown(f"**{name}** `{inp}`")
+                    st.json(out, expanded=False)
+
+        suggestions = ["Should the CFO renew the campaign as-is?",
+                       "What if the value per conversion is $60?",
+                       "Which users should we stop paying to reach?",
+                       "Which strategy makes the most profit, and why?",
+                       "How sure are we the model's ranking is real?"]
+        picked = None
+        for col, s_ in zip(st.columns(len(suggestions)), suggestions):
+            if col.button(s_, use_container_width=True, key=f"sugg_{s_}"):
+                picked = s_
+        for turn in st.session_state.chat:
+            with st.chat_message(turn["role"]):
+                render(turn["answer"]) if turn["role"] == "assistant" else st.markdown(turn["content"])
+        with st.form("ask_form", clear_on_submit=True):
+            typed = st.text_input("Your question", placeholder="e.g. What's our profit if cost per exposed user drops to $0.50?")
+            sent = st.form_submit_button("Ask", type="primary")
+        q = (typed if sent and typed.strip() else None) or picked
+        if q:
+            with st.chat_message("user"):
+                st.markdown(q)
+            history = [{"role": t["role"], "content": t["content"]} for t in st.session_state.chat][-6:]
+            with st.chat_message("assistant"):
+                with st.status("Querying the experiment…", expanded=True) as status:
+                    try:
+                        ans = AI.ask(q, history, tb, key, on_step=status.write)
+                    except Exception as e:
+                        status.update(label="The AI call failed", state="error", expanded=True)
+                        msg = str(e)
+                        st.error("Gemini's free-tier rate limit was hit. Wait a minute and ask again."
+                                 if ("429" in msg or "RESOURCE_EXHAUSTED" in msg)
+                                 else f"The AI call failed ({type(e).__name__}: {msg[:300]}).")
+                        ans = None
+                    if ans:
+                        status.update(label=f"Answered with {ans['model']} · {len(ans['calls'])} data lookups",
+                                      state="complete", expanded=False)
+                if ans:
+                    render(ans)
+                    st.session_state.chat += [{"role": "user", "content": q},
+                                              {"role": "assistant", "content": ans["text"], "answer": ans}]
+
+# =================================================================== TAB 6: METHODS & SQL
+with tabs[6]:
     ui.section("Methods, data and SQL", "Everything here is reproducible: DuckDB holds the 14M-row table and every figure comes from a query.")
     c1, c2 = st.columns([1, 1])
     with c1:
