@@ -303,11 +303,19 @@ def ask(question: str, history: list, toolbox: Toolbox, key: str, on_step=None) 
 
     step = on_step or (lambda m: None)
     a = toolbox.a
-    client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=45_000))
-    config = types.GenerateContentConfig(
-        system_instruction=SYSTEM.format(outcome=a.outcome, value=a.value, cost=a.cost, audience=a.audience, conf=a.conf),
-        tools=_declarations(types), temperature=0.2,
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
+    client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=90_000))
+
+    def make_config(thinking: bool):
+        kw = dict(system_instruction=SYSTEM.format(outcome=a.outcome, value=a.value, cost=a.cost,
+                                                   audience=a.audience, conf=a.conf),
+                  tools=_declarations(types), temperature=0.2,
+                  automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
+        if thinking:
+            # Low thinking keeps answers fast: our tools do all the maths, Gemini only picks tools and writes.
+            kw["thinking_config"] = types.ThinkingConfig(thinking_level="LOW")
+        return types.GenerateContentConfig(**kw)
+
+    config = make_config(thinking=True)
     contents = [types.Content(role="model" if h["role"] == "assistant" else "user",
                               parts=[types.Part.from_text(text=h["content"])]) for h in history]
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=question)]))
@@ -316,15 +324,24 @@ def ask(question: str, history: list, toolbox: Toolbox, key: str, on_step=None) 
     for attempt in range(7):
         step(f"Asking {model}…" if attempt == 0 else "Writing the answer from the data…")
         t0 = time.time()
-        try:
-            resp = client.models.generate_content(model=model, contents=contents, config=config)
-        except Exception as e:
-            if attempt == 0 and ("404" in str(e) or "not found" in str(e).lower()):
-                model = _pick_model(client, model, str(e))
+        resp = None
+        for tries in range(3):
+            try:
                 resp = client.models.generate_content(model=model, contents=contents, config=config)
-            else:
-                _log(f"request {attempt} failed after {time.time() - t0:.1f}s: {e}")
-                raise
+                break
+            except Exception as e:
+                msg = str(e)
+                _log(f"request {attempt} try {tries} failed after {time.time() - t0:.1f}s: {msg[:200]}")
+                if "404" in msg or "not found" in msg.lower():          # retired model -> suggested one
+                    model = _pick_model(client, model, msg)
+                elif "thinking" in msg.lower() and "400" in msg:       # model without thinking levels
+                    config = make_config(thinking=False)
+                elif ("504" in msg or "503" in msg or "DEADLINE" in msg or "UNAVAILABLE" in msg) and tries == 0:
+                    step("Google was slow to respond. Retrying once…")
+                else:
+                    raise
+                if tries == 2:
+                    raise
         fcs = resp.function_calls or []
         _log(f"request {attempt} ok in {time.time() - t0:.1f}s, tool calls: {[f.name for f in fcs]}")
         if not fcs:
