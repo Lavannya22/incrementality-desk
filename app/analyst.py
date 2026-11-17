@@ -303,7 +303,7 @@ def ask(question: str, history: list, toolbox: Toolbox, key: str, on_step=None) 
 
     step = on_step or (lambda m: None)
     a = toolbox.a
-    client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=90_000))
+    client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=40_000))
 
     def make_config(thinking: bool):
         kw = dict(system_instruction=SYSTEM.format(outcome=a.outcome, value=a.value, cost=a.cost,
@@ -336,8 +336,15 @@ def ask(question: str, history: list, toolbox: Toolbox, key: str, on_step=None) 
                     model = _pick_model(client, model, msg)
                 elif "thinking" in msg.lower() and "400" in msg:       # model without thinking levels
                     config = make_config(thinking=False)
-                elif ("504" in msg or "503" in msg or "DEADLINE" in msg or "UNAVAILABLE" in msg) and tries == 0:
-                    step("Google was slow to respond. Retrying once…")
+                elif "504" in msg or "503" in msg or "DEADLINE" in msg or "UNAVAILABLE" in msg or "overloaded" in msg.lower():
+                    alt = _pick_model(client, model, "")             # busy model: switch to another flash model
+                    if alt != model:
+                        step(f"{model} is busy right now. Switching to {alt}…")
+                        model = alt
+                    elif tries == 0:
+                        step("Google was slow to respond. Retrying once…")
+                    else:
+                        raise
                 else:
                     raise
                 if tries == 2:
